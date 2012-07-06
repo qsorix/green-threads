@@ -3,50 +3,69 @@
 #include <cassert>
 #include <ucontext.h>
 #include <vector>
+#include <cstdlib>
 
 namespace mt
 {
 
 static std::vector<ucontext_t*> threads;
 static ucontext_t               scheduler_context;
-static ucontext_t               go_context;
-static size_t                   current_thread = 0;
+static size_t                   current_thread = -1;
 
-void activate_next_task(ucontext_t* now, size_t next)
+void destroy_task(size_t index);
+
+size_t pick_next_task(size_t hint)
 {
-	if (next == threads.size())
+	assert(!threads.empty());
+
+	/* STRATEGY: round robin */
+	/*
+	size_t next = hint;
+	if (hint == threads.size())
 	{
 		next = 0;
 	}
+	*/
 
-	//std::cerr << "swap from " << current_thread << " to " << next << std::endl;
+	/* STRATEGY: random */
+	size_t next = std::rand()%threads.size();
+
+	return next;
+}
+
+void switch_from_to(ucontext_t* now, size_t next)
+{
+	std::cerr << "swap from " << current_thread << " to " << next << std::endl;
+
+	// FIXME: this assumes swapcontext is called immediatelly, which is not
+	// nice.
 	current_thread = next;
+
 	swapcontext(now, threads[next]);
 }
 
+/** Called in a task's context.
+ * Should switch to a different task. May switch to the same one, if there are
+ * no more left. */
 void yield()
 {
-	assert(!threads.empty());
-	ucontext_t* now = threads[current_thread];
-
-	size_t next = current_thread+1;
-	activate_next_task(now, next);
+	switch_from_to(threads[current_thread],
+		       pick_next_task(current_thread+1));
 }
 
 /** Called in scheduler's context when a task finishes.
  * Remove current thread from pool and run next one if possible */
 bool run_next()
 {
-	threads.erase(threads.begin()+current_thread);
+	destroy_task(current_thread);
+
 	if (threads.empty())
 	{
 		return false;
 	}
 
-	ucontext_t* now = &scheduler_context;
-
-	size_t next = current_thread; // element at that index just got erased, so it now points to next
-	activate_next_task(now, next);
+	switch_from_to(&scheduler_context,
+		       pick_next_task(current_thread));
 
 	return true;
 }
@@ -95,6 +114,15 @@ void add_task(void (*func)())
 	threads.push_back(ctx);
 }
 
+void destroy_task(size_t index)
+{
+	ucontext* ctx = threads[index];
+	delete static_cast<char*>(ctx->uc_stack.ss_sp);
+	delete ctx;
+
+	threads.erase(threads.begin()+index);
+}
+
 void run_scheduler()
 {
 	// first thread enters here and saves scheduler_context.
@@ -102,7 +130,7 @@ void run_scheduler()
 	// when each thread finihes, it goes back to scheduler_context, i.e.
 	// here. then it call run_next, which either does nothing if it was the
 	// last task and in such case we return, or it switches to another task.
-	swapcontext(&scheduler_context, threads[0]);
+	switch_from_to(&scheduler_context, 0);
 	while (run_next());
 
 	std::cerr << "run scheduler exit" << std::endl;

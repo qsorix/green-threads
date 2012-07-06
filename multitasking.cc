@@ -12,23 +12,25 @@ static ucontext_t               scheduler_context;
 static ucontext_t               go_context;
 static size_t                   current_thread = 0;
 
-void yield()
+void activate_next_task(ucontext_t* now, size_t next)
 {
-	assert(!threads.empty());
-
-	size_t next;
-	if (current_thread+1 == threads.size())
+	if (next == threads.size())
 	{
 		next = 0;
 	}
-	else
-	{
-		next = current_thread+1;
-	}
+
 	//std::cerr << "swap from " << current_thread << " to " << next << std::endl;
-	size_t now = current_thread;
 	current_thread = next;
-	swapcontext(threads[now], threads[next]);
+	swapcontext(now, threads[next]);
+}
+
+void yield()
+{
+	assert(!threads.empty());
+	ucontext_t* now = threads[current_thread];
+
+	size_t next = current_thread+1;
+	activate_next_task(now, next);
 }
 
 /** Called in scheduler's context when a task finishes.
@@ -41,13 +43,11 @@ bool run_next()
 		return false;
 	}
 
-	if (current_thread == threads.size())
-	{
-		current_thread = 0;
-	}
+	ucontext_t* now = &scheduler_context;
 
-	ucontext_t* nc = threads[current_thread];
-	swapcontext(&scheduler_context, nc);
+	size_t next = current_thread; // element at that index just got erased, so it now points to next
+	activate_next_task(now, next);
+
 	return true;
 }
 

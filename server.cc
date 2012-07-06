@@ -14,7 +14,9 @@ void do_sth_with_database()
 {
 	query q = "select ...";
 	database.execute(q);
-	mt::yield_select(database); // a common wrapper on I/O objects would be nice
+	mt::yield_select(database); // a common wrapper on I/O objects would be
+				    // nice. probably better to think about
+				    // integration with reactor pattern.
 	result = database.result();
 }
 

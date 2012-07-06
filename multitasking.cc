@@ -5,12 +5,15 @@
 #include <vector>
 #include <cstdlib>
 
+
+/** @warning this code runs only on machines where sizeof(void*) == 2 * sizeof(int) */
+
 namespace mt
 {
 
 static std::vector<ucontext_t*> threads;
 static ucontext_t               scheduler_context;
-static size_t                   current_thread = -1; // TODO: volatile? would it matter in case of context switches?
+static size_t                   current_thread = -1; // TODO: volatile? would it matter in case of context switches? atomic?
 
 void destroy_task(size_t index);
 
@@ -35,7 +38,7 @@ size_t pick_next_task(size_t hint)
 
 void switch_from_to(ucontext_t* now, size_t next)
 {
-	std::cerr << "swap from " << current_thread << " to " << next << std::endl;
+	// std::cerr << "swap from " << current_thread << " to " << next << std::endl;
 
 	current_thread = next;
 	swapcontext(now, threads[next]);
@@ -70,7 +73,8 @@ void run_thread(int func_as_int_low, int func_as_int_high)
 	}
 	catch(...)
 	{
-		std::cerr << "catch @run_thread" << std::endl;
+		std::cerr << "C'mon, don't let any exception reach this "
+			     "place..." << std::endl;
 	}
 }
 
@@ -96,6 +100,7 @@ void add_task(void (*func)())
 	buffer[0] = reinterpret_cast<int*>(&func)[0];
 	buffer[1] = reinterpret_cast<int*>(&func)[1];
 
+	// I'm a crazy spell caster, stay away or I'll kill you.
 	makecontext(ctx, reinterpret_cast<void (*)()>(run_thread), 2, buffer[0], buffer[1]); // fixme: sizeof(void (*)()) != sizeof(int)
 	threads.push_back(ctx);
 }

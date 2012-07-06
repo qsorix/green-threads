@@ -1,6 +1,7 @@
 #include <iostream>
 #include <stdexcept>
 #include "multitasking.h"
+#include <cstdlib>
 
 struct Foo
 {
@@ -83,6 +84,7 @@ void threaded_main()
 
 int main()
 {
+	std::srand(time(NULL));
 	try
 	{
 		mt::execute(threaded_main);

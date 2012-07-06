@@ -10,7 +10,7 @@ namespace mt
 
 static std::vector<ucontext_t*> threads;
 static ucontext_t               scheduler_context;
-static size_t                   current_thread = -1;
+static size_t                   current_thread = -1; // TODO: volatile? would it matter in case of context switches?
 
 void destroy_task(size_t index);
 
@@ -37,10 +37,7 @@ void switch_from_to(ucontext_t* now, size_t next)
 {
 	std::cerr << "swap from " << current_thread << " to " << next << std::endl;
 
-	// FIXME: this assumes swapcontext is called immediatelly, which is not
-	// nice.
 	current_thread = next;
-
 	swapcontext(now, threads[next]);
 }
 
@@ -53,26 +50,15 @@ void yield()
 		       pick_next_task(current_thread+1));
 }
 
-/** Called in scheduler's context when a task finishes.
- * Remove current thread from pool and run next one if possible */
-bool run_next()
-{
-	destroy_task(current_thread);
-
-	if (threads.empty())
-	{
-		return false;
-	}
-
-	switch_from_to(&scheduler_context,
-		       pick_next_task(current_thread));
-
-	return true;
-}
-
+/** Wrap function in a try-catch and execute it.
+ * This is an entry point of each task. Same as with threads, we really don't
+ * want any exception to exit this scope, this would crash because beyond this
+ * function, there is only C code that transfers execution back to a different
+ * context. Nobody there knows about exceptions.*/
 void run_thread(int func_as_int_low, int func_as_int_high)
 {
-	// bleeagh, vomit.
+	// bleeagh, vomit. i wish there would be one good old void*
+	// parameter...
 	typedef void (*fp)();
 	int buffer[2] = {func_as_int_low, func_as_int_high};
 	assert(sizeof(buffer)==sizeof(fp));
@@ -127,13 +113,32 @@ void run_scheduler()
 {
 	// first thread enters here and saves scheduler_context.
 	//
-	// when each thread finihes, it goes back to scheduler_context, i.e.
-	// here. then it call run_next, which either does nothing if it was the
-	// last task and in such case we return, or it switches to another task.
-	switch_from_to(&scheduler_context, 0);
-	while (run_next());
+	// every task is configured to go back to scheduler_context when it
+	// finishes, so when switch_from_to returns, we know that most recently
+	// run task finished and we can destroy it.
+	//
+	// then we try to switch to the next one, or return if all are done.
+	//
+	// NOTE: the key to make destructors and exceptions work is to never
+	// loose any context, i.e. execute all of them until completion
 
-	std::cerr << "run scheduler exit" << std::endl;
+	assert(!threads.empty());
+	switch_from_to(&scheduler_context, 0);
+
+	while (true)
+	{
+		destroy_task(current_thread);
+
+		if (threads.empty())
+		{
+			break;
+		}
+
+		switch_from_to(&scheduler_context,
+			       pick_next_task(current_thread));
+	}
+
+	// std::cerr << "run scheduler exit" << std::endl;
 }
 
 

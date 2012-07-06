@@ -8,12 +8,14 @@ namespace mt
 {
 
 static std::vector<ucontext_t*> threads;
-static ucontext_t               switching_context;
+static ucontext_t               scheduler_context;
 static ucontext_t               go_context;
 static size_t                   current_thread = 0;
 
 void yield()
 {
+	assert(!threads.empty());
+
 	size_t next;
 	if (current_thread+1 == threads.size())
 	{
@@ -29,24 +31,29 @@ void yield()
 	swapcontext(threads[now], threads[next]);
 }
 
-void run_next()
+/** Called in scheduler's context when a task finishes.
+ * Remove current thread from pool and run next one if possible */
+bool run_next()
 {
 	threads.erase(threads.begin()+current_thread);
 	if (threads.empty())
 	{
-		//std::cerr << "run next is done, exiting" << std::endl;
-		return;
+		return false;
 	}
+
 	if (current_thread == threads.size())
 	{
 		current_thread = 0;
 	}
+
 	ucontext_t* nc = threads[current_thread];
-	setcontext(nc);
+	swapcontext(&scheduler_context, nc);
+	return true;
 }
 
 void run_thread(int func_as_int_low, int func_as_int_high)
 {
+	// bleeagh, vomit.
 	typedef void (*fp)();
 	int buffer[2] = {func_as_int_low, func_as_int_high};
 	assert(sizeof(buffer)==sizeof(fp));
@@ -62,7 +69,7 @@ void run_thread(int func_as_int_low, int func_as_int_high)
 	}
 }
 
-void create_task(void (*func)())
+void add_task(void (*func)())
 {
 	const size_t stack_size = 163840;
 
@@ -75,7 +82,7 @@ void create_task(void (*func)())
 	ctx->uc_stack.ss_size = stack_size;
 
 	// when thread finishes, pass control back to scheduler
-	ctx->uc_link = &switching_context; // fixme: rename switching_context to 'scheduler_context'
+	ctx->uc_link = &scheduler_context;
 
 	// hack, hack, hack, trala la, strict aliasing, portability fixme
 	typedef void (*fp)();
@@ -88,42 +95,23 @@ void create_task(void (*func)())
 	threads.push_back(ctx);
 }
 
-void add_task(void (*func)())
-{
-	create_task(func);
-}
-
-bool store_switching_context()
-{
-	volatile bool first = true;
-	getcontext(&switching_context);
-	if (first)
-	{
-		first = false;
-		swapcontext(&go_context, threads[0]);
-		std::cerr << "go context returns" << std::endl;
-		return true;
-	}
-	else
-	{
-		//std::cerr << "thread finished" << std::endl;
-		run_next();
-	}
-	swapcontext(&switching_context, &go_context);
-	std::cerr << "store_switching_context returns" << std::endl;
-	return false;
-}
-
 void run_scheduler()
 {
-	store_switching_context();
+	// first thread enters here and saves scheduler_context.
+	//
+	// when each thread finihes, it goes back to scheduler_context, i.e.
+	// here. then it call run_next, which either does nothing if it was the
+	// last task and in such case we return, or it switches to another task.
+	swapcontext(&scheduler_context, threads[0]);
+	while (run_next());
+
 	std::cerr << "run scheduler exit" << std::endl;
 }
 
 
 void execute(void (*entry_point)())
 {
-	create_task(entry_point);
+	add_task(entry_point);
 	run_scheduler();
 }
 

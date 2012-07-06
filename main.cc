@@ -75,9 +75,9 @@ void loop2()
 
 void threaded_main()
 {
-	// mt::add_task(loop1);
-	// mt::add_task(loop2);
-	// mt::add_task(loop2);
+	mt::add_task(loop1);
+	mt::add_task(loop2);
+	mt::add_task(loop2);
 	std::cerr << "threaded_main returns" << std::endl;
 }
 
